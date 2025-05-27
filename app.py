@@ -81,6 +81,7 @@ def register():
     users = load_users()
     username = request.form['username']
     password = request.form['password']
+
     if username in users or username == SUPER_ADMIN['username']:
         flash('用户名已存在')
         return redirect(url_for('login'))
@@ -90,68 +91,129 @@ def register():
         'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
     save_users(users)
-    flash('注册成功，请登录')
-    return redirect(url_for('login'))
 
-@app.route('/dashboard', methods=['GET', 'POST'])
+    # ✅ 注册成功后自动登录
+    session['user'] = username
+    flash('✅ 注册成功，欢迎！')
+    return redirect(url_for('dashboard'))
+
+
+@app.route('/dashboard')
 def dashboard():
     if 'user' not in session:
         return redirect(url_for('login'))
 
-    users = load_users()
+    username = session['user']
+    is_admin_user = is_admin()
+
+    # 获取当前访问的文件夹与所属用户
+    folder = request.args.get('folder', 'default').strip()
+    target_user = request.args.get('user', username).strip()
+
+    # 收集所有可访问的文件夹（当前用户 + 公开 + 管理员全可见）
+    visible_folders = []
+    for user_dir in os.listdir(UPLOAD_FOLDER):
+        user_path = os.path.join(UPLOAD_FOLDER, user_dir)
+        if not os.path.isdir(user_path):
+            continue
+
+        # 加载 folder_meta.json
+        meta_path = os.path.join(user_path, 'folder_meta.json')
+        folder_meta = {}
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path) as f:
+                    folder_meta = json.load(f)
+            except:
+                pass
+
+        # 添加用户的已有文件夹
+        for folder_name, info in folder_meta.items():
+            permission = info.get("permission", "private")
+            if user_dir == username or is_admin_user or permission == "public":
+                visible_folders.append({
+                    "owner": user_dir,
+                    "folder": folder_name,
+                    "permission": permission,
+                    "description": info.get("description", "")
+                })
+
+        # ✅ 始终检查 default 文件夹是否存在并可见
+        default_path = os.path.join(user_path, 'default')
+        already_included = any(f["owner"] == user_dir and f["folder"] == "default" for f in visible_folders)
+        if os.path.exists(default_path) and not already_included:
+            if user_dir == username or is_admin_user:
+                visible_folders.append({
+                    "owner": user_dir,
+                    "folder": "default",
+                    "permission": "private",
+                    "description": "(默认文件夹)"
+                })
+
+    # 加载当前正在访问的文件夹内容
+    target_root = os.path.join(UPLOAD_FOLDER, target_user)
+    folder_path = os.path.join(target_root, folder)
+
+    # 若访问的是当前用户，default 不存在时自动创建
+    if not os.path.exists(folder_path):
+        if target_user == username:
+            os.makedirs(folder_path, exist_ok=True)
+        else:
+            flash("❌ 文件夹不存在")
+            return redirect(url_for('dashboard', folder='default', user=username))
+
+    # 检查访问权限
+    folder_permission = 'private'
+    folder_meta_path = os.path.join(target_root, 'folder_meta.json')
+    if os.path.exists(folder_meta_path):
+        with open(folder_meta_path) as f:
+            folder_meta = json.load(f)
+            if folder in folder_meta:
+                folder_permission = folder_meta[folder].get('permission', 'private')
+
+    if folder_permission == 'private' and target_user != username and not is_admin_user:
+        flash("❌ 无权限访问该文件夹")
+        return redirect(url_for('dashboard', folder='default', user=username))
+
+    # 加载文件及元数据
     meta = load_metadata()
+    files = []
 
-    # 标记删除用户
-    deleted_users = {info['owner'] for info in meta.values()
-                     if info['owner'] not in users and info['owner'] != SUPER_ADMIN['username']}
+    for fname in os.listdir(folder_path):
+        fpath = os.path.join(folder_path, fname)
+        if not os.path.isfile(fpath):
+            continue
 
-    used = sum(info['size'] for info in meta.values())
-    total = TOTAL_QUOTA
+        meta_key = f"{target_user}/{folder}/{fname}"
+        file_info = meta.get(meta_key, {})
 
-    if request.method == 'POST':
-        files = request.files.getlist('file')
-        description = request.form.get('description', '')
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        for uploaded_file in files:
-            if uploaded_file and uploaded_file.filename:
-                filename = uploaded_file.filename
-                save_path = os.path.join(UPLOAD_FOLDER, filename)
-                uploaded_file.save(save_path)
-                size = os.path.getsize(save_path)
-                meta[filename] = {
-                    "owner": session['user'],
-                    "size": size,
-                    "upload_time": now,
-                    "download_count": 0,
-                    "description": description
-                }
-                save_log({'user': session['user'], 'filename': filename, 'time': now}, UPLOAD_LOG_FILE)
-        save_metadata(meta)
-        flash("上传成功")
-        return redirect(url_for('dashboard'))
-
-    files = [
-        {
-            "name": name,
-            "size": info["size"],
-            "time": info["upload_time"],
-            "owner": info["owner"],
-            "downloads": info.get("download_count", 0),
-            "description": info.get("description", "")
-        }
-        for name, info in meta.items()
-    ]
+        files.append({
+            "name": fname,
+            "size": os.path.getsize(fpath),
+            "time": datetime.fromtimestamp(os.path.getmtime(fpath)).strftime('%Y-%m-%d %H:%M:%S'),
+            "owner": file_info.get("owner", target_user),  # ✅ 正确显示上传者
+            "downloads": file_info.get("download_count", 0),
+            "description": file_info.get("description", ""),
+            "meta_key": meta_key,
+            "folder": folder
+        })
 
     files.sort(key=lambda x: x["time"], reverse=True)
 
-    return render_template('dashboard.html',
+    return render_template("dashboard.html",
+        username=username,
+        used_space=sum(f["size"] for f in files),
+        total_space=TOTAL_QUOTA,
+        total_quota_mb=TOTAL_QUOTA / 1024 / 1024,
         files=files,
-        username=session['user'],
-        used_space=used,
-        total_space=total,
-        total_quota_mb=total / 1024 / 1024,
-        deleted_users=deleted_users
+        folder=folder,
+        folder_owner=target_user,
+        folders=visible_folders,
+        deleted_users=set()
     )
+
+
+
 
 @app.route('/change_password', methods=['POST'])
 def change_password():
@@ -192,70 +254,127 @@ def logout():
     session.pop('user', None)
     return redirect(url_for('login'))
 
-@app.route('/download/<filename>')
-def download(filename):
+@app.route('/download/<path:encoded>')
+def download(encoded):
     if 'user' not in session:
         return redirect(url_for('login'))
 
     meta = load_metadata()
-    safe = os.path.basename(filename)
+    username = session['user']
+    is_admin_user = is_admin()
 
-    if safe in meta:
-        meta[safe]["download_count"] = meta[safe].get("download_count", 0) + 1
+    # encoded: user/folder/filename
+    meta_key = encoded
+    parts = encoded.split('/')
+    if len(parts) != 3:
+        flash("❌ 无效文件路径")
+        return redirect(url_for('dashboard'))
+
+    file_owner, folder, filename = parts
+
+    if meta_key not in meta:
+        flash("❌ 文件不存在")
+        return redirect(url_for('dashboard'))
+
+    file_info = meta[meta_key]
+    permission = file_info.get("permission", "private")
+
+    # ✅ 权限判断
+    if permission == "private" and username != file_owner and not is_admin_user:
+        flash("❌ 没有权限下载该文件")
+        return redirect(url_for('dashboard'))
+
+    # ✅ 记录下载次数 + 写日志
+    file_info["download_count"] = file_info.get("download_count", 0) + 1
+    save_metadata(meta)
+    save_log({'user': username, 'filename': meta_key, 'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, DOWNLOAD_LOG_FILE)
+
+    file_path = os.path.join(UPLOAD_FOLDER, file_owner, folder)
+    return send_from_directory(file_path, filename, as_attachment=True)
+
+
+
+@app.route('/delete/<path:encoded>')
+def delete_file(encoded):
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    username = session['user']
+    is_admin_user = is_admin()
+
+    parts = encoded.split('/')
+    if len(parts) != 3:
+        flash("❌ 无效文件路径")
+        return redirect(url_for('dashboard'))
+
+    file_owner, folder, filename = parts
+    meta_key = f"{file_owner}/{folder}/{filename}"
+
+    meta = load_metadata()
+    if meta_key not in meta:
+        flash("⚠️ 文件不存在")
+        return redirect(url_for('dashboard', folder=folder, user=file_owner))
+
+    file_info = meta[meta_key]
+    upload_owner = file_info.get('owner', '')
+    folder_owner = file_info.get('folder_owner', file_owner)
+
+    if username != upload_owner and username != folder_owner and not is_admin_user:
+        flash("❌ 无权删除该文件")
+        return redirect(url_for('dashboard', folder=folder, user=folder_owner))
+
+    try:
+        os.remove(os.path.join(UPLOAD_FOLDER, folder_owner, folder, filename))
+        meta.pop(meta_key)
         save_metadata(meta)
+        flash(f"✅ 已删除文件：{filename}")
+    except Exception as e:
+        flash("❌ 删除失败：" + str(e))
 
-    save_log({'user': session['user'], 'filename': filename, 'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, DOWNLOAD_LOG_FILE)
-    return send_from_directory(UPLOAD_FOLDER, safe, as_attachment=True)
-
-@app.route('/api/download/<filename>', methods=['POST'])
-def api_download(filename):
-    if 'user' not in session:
-        return "未登录", 403
-    return url_for('download', filename=filename)
-
-@app.route('/delete/<filename>')
-def delete_file(filename):
-    if 'user' not in session:
-        return redirect(url_for('login'))
-
-    meta = load_metadata()
-    safe = os.path.basename(filename)
-
-    if safe in meta:
-        if meta[safe]['owner'] == session['user'] or is_admin():
-            try:
-                os.remove(os.path.join(UPLOAD_FOLDER, safe))
-                meta.pop(safe)
-                save_metadata(meta)
-                flash(f"已删除：{safe}")
-            except:
-                flash("删除失败")
-        else:
-            flash("无权限删除该文件")
-    return redirect(url_for('dashboard'))
+    return redirect(url_for('dashboard', folder=folder, user=folder_owner))
 
 @app.route('/delete_many', methods=['POST'])
 def delete_many():
     if 'user' not in session:
         return redirect(url_for('login'))
 
+    username = session['user']
+    is_admin_user = is_admin()
     meta = load_metadata()
     to_delete = request.form.getlist('files')
     deleted = []
 
-    for fname in to_delete:
-        safe = os.path.basename(fname)
-        if safe in meta:
-            if meta[safe]['owner'] == session['user'] or is_admin():
-                try:
-                    os.remove(os.path.join(UPLOAD_FOLDER, safe))
-                    meta.pop(safe)
-                    deleted.append(safe)
-                except:
-                    pass
+    for meta_key in to_delete:
+        parts = meta_key.split('/')
+        if len(parts) != 3:
+            continue
+        file_owner, folder, filename = parts
+        if meta_key not in meta:
+            continue
+
+        file_info = meta[meta_key]
+        upload_owner = file_info.get('owner', '')
+        folder_owner = file_info.get('folder_owner', file_owner)
+
+        if username != upload_owner and username != folder_owner and not is_admin_user:
+            continue
+
+        try:
+            os.remove(os.path.join(UPLOAD_FOLDER, folder_owner, folder, filename))
+            meta.pop(meta_key)
+            deleted.append(filename)
+        except:
+            continue
+
     save_metadata(meta)
-    flash(f"已删除：{', '.join(deleted)}")
-    return redirect(url_for('dashboard'))
+    flash(f"✅ 已批量删除：{', '.join(deleted)}")
+
+    # ✅ 保持当前视图跳转
+    folder = request.form.get('folder', 'default')
+    owner = request.form.get('user', session['user'])
+    return redirect(url_for('dashboard', folder=folder, user=owner))
+
+
 
 @app.route('/admin/users')
 def admin_users():
@@ -282,6 +401,7 @@ def admin_users():
 
     return render_template('admin_user.html', users=user_stats, username=session['user'], deleted_users=deleted_users)
 
+import shutil
 @app.route('/admin/delete_users', methods=['POST'])
 def admin_delete_users():
     if not is_admin():
@@ -296,8 +416,25 @@ def admin_delete_users():
             users.pop(uname)
             deleted.append(uname)
 
+            # ✅ 删除该用户 uploads/<uname> 文件夹
+            user_dir = os.path.join(UPLOAD_FOLDER, uname)
+            if os.path.exists(user_dir):
+                try:
+                    shutil.rmtree(user_dir)
+                    print(f"✅ 已删除用户 {uname} 的文件夹数据")
+                except Exception as e:
+                    print(f"⚠️ 删除用户文件夹失败（{uname}）：{e}")
+
+            # ✅ 删除该用户相关的元数据
+            with meta_lock:
+                meta = load_metadata()
+                keys_to_delete = [k for k in meta if k.startswith(f"{uname}/")]
+                for k in keys_to_delete:
+                    meta.pop(k)
+                save_metadata(meta)
+
     save_users(users)
-    flash(f"已删除用户：{', '.join(deleted)}")
+    flash(f"✅ 已删除用户：{', '.join(deleted)}")
     return redirect(url_for('admin_users'))
 
 @app.route('/admin/change_password', methods=['POST'])
@@ -380,31 +517,208 @@ def upload_one():
     if 'user' not in session:
         return '未登录', 403
 
-    uploaded_file = request.files.get('file')
+    username = session['user']
+    target_user = request.form.get('user', username).strip()
+    folder = request.form.get('folder', 'default').strip()
     description = request.form.get('description', '')
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+    user_dir = os.path.join(UPLOAD_FOLDER, target_user)
+    folder_path = os.path.join(user_dir, folder)
+    os.makedirs(folder_path, exist_ok=True)
+
+    permission = 'private'
+    folder_meta_path = os.path.join(user_dir, 'folder_meta.json')
+    if os.path.exists(folder_meta_path):
+        try:
+            with open(folder_meta_path) as f:
+                folder_meta = json.load(f)
+                if folder in folder_meta:
+                    permission = folder_meta[folder].get('permission', 'private')
+        except:
+            pass
+
+    # 权限校验
+    is_self_upload = (username == target_user)
+    if not is_self_upload and not is_admin():
+        if permission != 'public':
+            return '❌ 无权限上传到私密文件夹', 403
+
+    uploaded_file = request.files.get('file')
     if uploaded_file and uploaded_file.filename:
         filename = uploaded_file.filename
-        save_path = os.path.join(UPLOAD_FOLDER, filename)
+        save_path = os.path.join(folder_path, filename)
         uploaded_file.save(save_path)
         size = os.path.getsize(save_path)
+        meta_key = f"{target_user}/{folder}/{filename}"
 
         with meta_lock:
             meta = load_metadata()
-            meta[filename] = {
-                "owner": session['user'],
+            meta[meta_key] = {
+                "owner": username,  # ✅ 正确记录上传者
+                "folder_owner": target_user,  # ✅ 存储文件夹所属者（可选）
                 "size": size,
                 "upload_time": now,
                 "download_count": 0,
-                "description": description
+                "description": description,
+                "folder": folder,
+                "permission": permission
             }
             save_metadata(meta)
 
-        save_log({'user': session['user'], 'filename': filename, 'time': now}, UPLOAD_LOG_FILE)
+        save_log({'user': username, 'filename': meta_key, 'time': now}, UPLOAD_LOG_FILE)
         return 'OK'
 
-    return '失败', 400
+    return '❌ 未选择有效文件', 400
+
+
+
+
+@app.route('/create_folder', methods=['POST'])
+def create_folder():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    username = session['user']
+    folder_name = request.form.get('folder_name', '').strip()
+    description = request.form.get('description', '').strip()
+    permission = request.form.get('permission', 'private')
+
+    # 校验合法性
+    if not folder_name or '/' in folder_name or '\\' in folder_name:
+        flash("❌ 文件夹名称非法")
+        return redirect(url_for('dashboard'))
+
+    user_folder_root = os.path.join(UPLOAD_FOLDER, username)
+    folder_path = os.path.join(user_folder_root, folder_name)
+
+    # 创建文件夹目录
+    os.makedirs(folder_path, exist_ok=True)
+
+    # 保存文件夹元信息（保存在 folder.meta.json 中）
+    meta_file = os.path.join(user_folder_root, 'folder_meta.json')
+    folder_meta = {}
+    if os.path.exists(meta_file):
+        try:
+            with open(meta_file) as f:
+                folder_meta = json.load(f)
+        except:
+            pass
+
+    folder_meta[folder_name] = {
+        "owner": username,
+        "description": description,
+        "permission": permission,
+        "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    with open(meta_file, 'w') as f:
+        json.dump(folder_meta, f, indent=2)
+
+    flash(f"✅ 已创建文件夹 {folder_name}，权限：{permission}")
+    return redirect(url_for('dashboard'))
+
+@app.route('/delete_folder', methods=['POST'])
+def delete_folder():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    username = session['user']
+    is_admin_user = is_admin()
+
+    folder = request.form.get('folder', '').strip()
+    target_user = request.form.get('user', '').strip()
+
+    if not folder or not target_user:
+        flash("❌ 参数缺失")
+        return redirect(url_for('dashboard'))
+
+    if folder == 'default':
+        flash("❌ 无法删除默认文件夹")
+        return redirect(url_for('dashboard', folder=folder, user=target_user))
+
+    if username != target_user and not is_admin_user:
+        flash("❌ 无权限删除其他用户的文件夹")
+        return redirect(url_for('dashboard', folder=folder, user=target_user))
+
+    folder_path = os.path.join(UPLOAD_FOLDER, target_user, folder)
+    if os.path.exists(folder_path):
+        try:
+            shutil.rmtree(folder_path)
+            # 清除 folder_meta.json 中的条目
+            meta_path = os.path.join(UPLOAD_FOLDER, target_user, 'folder_meta.json')
+            if os.path.exists(meta_path):
+                with open(meta_path, 'r') as f:
+                    folder_meta = json.load(f)
+                if folder in folder_meta:
+                    folder_meta.pop(folder)
+                    with open(meta_path, 'w') as f:
+                        json.dump(folder_meta, f, indent=2)
+            # 删除 metadata 中该文件夹下的文件项
+            with meta_lock:
+                meta = load_metadata()
+                keys_to_delete = [k for k in meta if k.startswith(f"{target_user}/{folder}/")]
+                for k in keys_to_delete:
+                    meta.pop(k)
+                save_metadata(meta)
+
+            flash(f"✅ 已删除文件夹：{folder}")
+        except Exception as e:
+            flash("❌ 删除失败：" + str(e))
+    else:
+        flash("⚠️ 文件夹不存在")
+
+    return redirect(url_for('dashboard'))
+
+@app.route('/delete_folders', methods=['POST'])
+def delete_folders():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    username = session['user']
+    is_admin_user = is_admin()
+    folders_to_delete = request.form.getlist('folders')
+    deleted = []
+
+    for item in folders_to_delete:
+        try:
+            owner, folder = item.split('/', 1)
+        except:
+            continue
+        if folder == 'default':
+            continue
+        if owner != username and not is_admin_user:
+            continue
+
+        folder_path = os.path.join(UPLOAD_FOLDER, owner, folder)
+        if os.path.exists(folder_path):
+            try:
+                shutil.rmtree(folder_path)
+                # 清理 folder_meta.json
+                meta_path = os.path.join(UPLOAD_FOLDER, owner, 'folder_meta.json')
+                if os.path.exists(meta_path):
+                    with open(meta_path, 'r') as f:
+                        folder_meta = json.load(f)
+                    if folder in folder_meta:
+                        folder_meta.pop(folder)
+                        with open(meta_path, 'w') as f:
+                            json.dump(folder_meta, f, indent=2)
+
+                # 删除文件 metadata
+                with meta_lock:
+                    meta = load_metadata()
+                    keys_to_delete = [k for k in meta if k.startswith(f"{owner}/{folder}/")]
+                    for k in keys_to_delete:
+                        meta.pop(k)
+                    save_metadata(meta)
+
+                deleted.append(f"{owner}/{folder}")
+            except:
+                continue
+
+    flash(f"✅ 已批量删除文件夹：{', '.join(deleted)}" if deleted else "⚠️ 无文件夹被删除")
+    return redirect(url_for('dashboard'))
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

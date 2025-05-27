@@ -28,6 +28,13 @@
             checkboxes.forEach(cb => cb.checked = source.checked);
         }
 
+        function toggleAllFolders(source) {
+            const checkboxes = document.querySelectorAll('.folder-checkbox');
+            checkboxes.forEach(cb => {
+                if (!cb.disabled) cb.checked = source.checked;
+            });
+        }
+
         async function handleDownload(filename, cell) {
             try {
                 const response = await fetch(`/api/download/${filename}`, { method: 'POST' });
@@ -102,6 +109,28 @@
             }
         }
 
+        function confirmDeleteFolder(folder, user) {
+            if (confirm(`确定要删除文件夹 ${folder} 吗？`)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = "{{ url_for('delete_folder') }}";
+
+                const folderInput = document.createElement('input');
+                folderInput.name = 'folder';
+                folderInput.value = folder;
+                folderInput.type = 'hidden';
+
+                const userInput = document.createElement('input');
+                userInput.name = 'user';
+                userInput.value = user;
+                userInput.type = 'hidden';
+
+                form.appendChild(folderInput);
+                form.appendChild(userInput);
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
     </script>
 </head>
 <body>
@@ -137,6 +166,10 @@
         <div class="progress-bar">
             <div class="progress" style="width: {{ (used_space / total_space) * 100 }}%"></div>
         </div>
+    </div>
+
+    <div style="margin: 10px 0; padding: 8px; background: #f9f9f9; border-left: 5px solid #999;">
+        📂 当前路径：<strong>{{ folder_owner }}/{{ folder }}</strong>
     </div>
 
     <form method="POST" action="{{ url_for('delete_many') }}">
@@ -175,9 +208,9 @@
                 {% for file in files %}
                 <tr>
                     <td>
-                        {% if file.owner == username or username == 'admin' %}
-                        <input type="checkbox" name="files" value="{{ file.name }}">
-                        {% endif %}
+                    {% if file.owner == username or folder_owner == username or username == 'admin' %}
+                        <input type="checkbox" name="files" value="{{ file.meta_key }}">
+                    {% endif %}
                     </td>
                     <td>{{ file.name }}</td>
                     <td>{{ (file.size / 1024) | round(1) }} KB</td>
@@ -193,8 +226,9 @@
                     <td id="downloads-{{ loop.index0 }}">{{ file.downloads }}</td>
                     <td>
                         <a href="javascript:void(0);" onclick="handleDownload('{{ file.name }}', document.getElementById('downloads-{{ loop.index0 }}'))">[下载]</a>
-                        {% if file.owner == username or username == 'admin' %}
-                        <a href="{{ url_for('delete_file', filename=file.name) }}" onclick="return confirm('确定要删除 {{ file.name }} 吗？');">[删除]</a>
+                        {% if file.owner == username or folder_owner == username or username == 'admin' %}
+                        <a href="{{ url_for('delete_file', encoded=file.meta_key) }}"
+                        onclick="return confirm('确定要删除 {{ file.name }} 吗？');">[删除]</a>
                         {% endif %}
                     </td>
                 </tr>
@@ -203,6 +237,9 @@
                 {% endfor %}
             </tbody>
         </table>
+        <input type="hidden" name="folder" value="{{ folder }}">
+        <input type="hidden" name="user" value="{{ folder_owner }}">
+
         <br>
         <button type="submit">批量删除</button>
         <p style="margin-top: 10px;">
@@ -211,8 +248,80 @@
     </form>
 
     <hr>
+    <h4>📁 创建新文件夹</h4>
+    <form method="POST" action="{{ url_for('create_folder') }}">
+        <label>文件夹名称：</label>
+        <input type="text" name="folder_name" required>
+
+        <label>描述：</label>
+        <input type="text" name="description" placeholder="可选描述">
+
+        <label>权限：</label>
+        <select name="permission">
+            <option value="private">私密（仅自己可访问）</option>
+            <option value="public">公开（所有人可访问）</option>
+        </select>
+
+        <button type="submit">创建</button>
+    </form>
+
+    <h4>📂 可访问的文件夹</h4>
+    <form method="POST" action="{{ url_for('delete_folders') }}">
+        <table border="1" cellpadding="6" cellspacing="0" width="100%" style="margin-bottom: 12px;">
+            <thead>
+                <tr>
+                    <th><input type="checkbox" onclick="toggleAllFolders(this)"> 选择</th>
+                    <th>文件夹</th>
+                    <th>权限</th>
+                    <th>描述</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for f in folders %}
+                <tr>
+                    <td align="center">
+                        <!-- ✅ 就是这里！ -->
+                        {% if f.folder != 'default' and (f.owner == username or username == 'admin') %}
+                        <input type="checkbox" class="folder-checkbox" name="folders" value="{{ f.owner }}/{{ f.folder }}">
+                        {% else %}
+                        <input type="checkbox" disabled>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if f.owner == folder_owner and f.folder == folder %}
+                            <strong>📁 {{ f.folder }}</strong>
+                        {% else %}
+                            <a href="{{ url_for('dashboard') }}?folder={{ f.folder }}&user={{ f.owner }}">
+                                📁 {{ f.folder }} <span style="color:gray;">({{ f.owner }})</span>
+                            </a>
+                        {% endif %}
+                    </td>
+                    <td>{{ f.permission }}</td>
+                    <td>{{ f.description or '—' }}</td>
+                    <td>
+                        {% if f.folder != 'default' and (f.owner == username or username == 'admin') %}
+                        <a href="#" style="font-size: 0.75em; color: red;" onclick="confirmDeleteFolder('{{ f.folder }}', '{{ f.owner }}')">[删除]</a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- ✅ 放在 form 里面 -->
+        <button type="submit" onclick="return confirm('确定要批量删除所选文件夹？');">批量删除文件夹</button>
+    </form>
+
+
+
+
+
+    <hr>
     <h4>📤 上传文件</h4>
     <form id="uploadForm">
+        <input type="hidden" id="folderInput" value="{{ folder }}">
+        <input type="hidden" id="ownerInput" value="{{ folder_owner }}">
         <input type="file" id="fileInput" name="file" multiple required><br><br>
         <label>📎 描述：</label><br>
         <input type="text" id="descriptionInput" placeholder="可选文件描述..." style="width: 100%; padding: 6px;"><br><br>
@@ -236,6 +345,8 @@
             const formData = new FormData();
             formData.append("file", file);
             formData.append("description", desc);
+            formData.append("folder", document.getElementById("folderInput").value);  // ✅ 新增
+            formData.append("user", document.getElementById("ownerInput").value);    // ✅ 新增
 
             const progressBarWrapper = document.createElement('div');
             progressBarWrapper.style.marginBottom = '10px';
