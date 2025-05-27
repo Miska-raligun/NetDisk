@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>下载记录 - 管理员</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="container">
+    <h2>📥 下载日志记录</h2>
+    <p>当前管理员：<strong>{{ username }}</strong> |
+        <a href="{{ url_for('admin_users') }}">用户管理</a> |
+        <a href="{{ url_for('admin_uploads') }}">📤 上传记录</a> |
+        <a href="{{ url_for('dashboard') }}">返回网盘</a> |
+        <a href="{{ url_for('logout') }}">退出</a>
+    </p>
+
+    <form method="POST" action="{{ url_for('clear_logs') }}" onsubmit="return confirm('确认清空所有下载记录？');">
+        <button type="submit">清空下载日志</button>
+    </form>
+
+    <table border="1" cellpadding="8" cellspacing="0" width="100%" style="margin-top: 10px;">
+        <thead>
+            <tr>
+                <th>用户名</th>
+                <th>下载文件</th>
+                <th>时间</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>
+                    {% if log.user in deleted_users %}
+                        <del style="color:red;">{{ log.user }}</del>
+                    {% else %}
+                        {{ log.user }}
+                    {% endif %}
+                </td>
+                <td>{{ log.filename }}</td>
+                <td>{{ log.time }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3">暂无下载记录</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+</body>
+</html>
+
+
+

@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Mio's Netdisk - 控制台</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .deleted-user {
+            color: red;
+            text-decoration: line-through;
+        }
+        .progress-bar {
+            width: 100%;
+            background: #eee;
+            height: 12px;
+            border-radius: 6px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .progress {
+            height: 100%;
+            background: green;
+        }
+    </style>
+    <script>
+        function toggleAll(source) {
+            const checkboxes = document.querySelectorAll('input[name="files"]');
+            checkboxes.forEach(cb => cb.checked = source.checked);
+        }
+
+        async function handleDownload(filename, cell) {
+            try {
+                const response = await fetch(`/api/download/${filename}`, { method: 'POST' });
+                const url = await response.text();
+                cell.innerText = parseInt(cell.innerText) + 1;
+                window.location.href = url;
+            } catch (e) {
+                alert("下载失败");
+            }
+        }
+
+        async function changeOwnPassword() {
+            const username = "{{ username }}";
+            const oldPassword = prompt("请输入原密码：");
+            if (!oldPassword) return;
+
+            // 第一步：先验证原密码
+            const checkForm = new FormData();
+            checkForm.append("username", username);
+            checkForm.append("old_password", oldPassword);
+
+            const verifyResp = await fetch("{{ url_for('verify_password') }}", {
+                method: "POST",
+                body: checkForm
+            });
+
+            if (!verifyResp.ok) {
+                alert("❌ 原密码错误，修改失败！");
+                return;
+            }
+
+            // 第二步：确认新密码
+            const newPassword = prompt("请输入新密码：");
+            if (!newPassword) return;
+
+            const formData = new FormData();
+            formData.append("username", username);
+            formData.append("old_password", oldPassword);
+            formData.append("new_password", newPassword);
+
+            const response = await fetch("{{ url_for('change_password') }}", {
+                method: "POST",
+                body: formData
+            });
+
+            if (response.redirected) {
+                window.location.href = response.url;
+            } else {
+                alert("修改失败，请重试");
+            }
+        }
+
+        function sortTable(colIndex, asc = true) {
+            const table = document.querySelector("table");
+            const rows = Array.from(table.tBodies[0].rows);
+
+            rows.sort((a, b) => {
+                let aText = a.cells[colIndex]?.innerText.trim();
+                let bText = b.cells[colIndex]?.innerText.trim();
+
+                // 统一转数字尝试
+                const aVal = parseFloat(aText.replace(/[^0-9.]/g, '')) || aText;
+                const bVal = parseFloat(bText.replace(/[^0-9.]/g, '')) || bText;
+
+                if (aVal < bVal) return asc ? -1 : 1;
+                if (aVal > bVal) return asc ? 1 : -1;
+                return 0;
+            });
+
+            for (const row of rows) {
+                table.tBodies[0].appendChild(row); // 重新插入排序后行
+            }
+        }
+
+    </script>
+</head>
+<body>
+<div class="container">
+    <h2>📁 Mio's Netdisk</h2>
+    <p>欢迎回来，<strong>{{ username }}</strong>！<a href="{{ url_for('logout') }}">[退出]</a></p>
+    <p>
+        <button onclick="changeOwnPassword()" class="btn">修改密码</button>
+    </p>
+    {% if username == 'admin' %}
+    <p>
+        <a href="{{ url_for('admin_users') }}">👥 用户管理</a> |
+        <a href="{{ url_for('admin_uploads') }}">📤 上传记录</a> |
+        <a href="{{ url_for('admin_logs') }}">📥 下载记录</a>
+    </p>
+    {% endif %}
+
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <ul class="flash">
+        {% for msg in messages %}
+          <li>{{ msg }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+
+    <div class="quota">
+        <strong>💾 磁盘空间：</strong>
+        已用 {{ (used_space / 1024 / 1024) | round(2) }} MB /
+        {{ total_quota_mb | round(2) }} MB
+        (剩余 {{ ((total_space - used_space) / 1024 / 1024) | round(2) }} MB)
+        <div class="progress-bar">
+            <div class="progress" style="width: {{ (used_space / total_space) * 100 }}%"></div>
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('delete_many') }}">
+        <table border="1" cellpadding="6" cellspacing="0" width="100%">
+            <thead>
+            <tr>
+                <th style="white-space:nowrap;"><input type="checkbox" onclick="toggleAll(this)"></th>
+                <th style="white-space:nowrap;">文件名
+                    <span class="sort-arrow" onclick="sortTable(1, true)">▲</span>
+                    <span class="sort-arrow" onclick="sortTable(1, false)">▼</span>
+                </th>
+                <th style="white-space:nowrap;">大小
+                    <span class="sort-arrow" onclick="sortTable(2, true)">▲</span>
+                    <span class="sort-arrow" onclick="sortTable(2, false)">▼</span>
+                </th>
+                <th style="white-space:nowrap;">上传时间
+                    <span class="sort-arrow" onclick="sortTable(3, true)">▲</span>
+                    <span class="sort-arrow" onclick="sortTable(3, false)">▼</span>
+                </th>
+                <th style="white-space:nowrap;">上传者
+                    <span class="sort-arrow" onclick="sortTable(4, true)">▲</span>
+                    <span class="sort-arrow" onclick="sortTable(4, false)">▼</span>
+                </th>
+                <th>描述</th>
+                <th style="white-space:nowrap;">下载次数
+                    <span class="sort-arrow" onclick="sortTable(6, true)">▲</span>
+                    <span class="sort-arrow" onclick="sortTable(6, false)">▼</span>
+                </th>
+                <th>操作</th>
+            </tr>
+            </thead>
+
+
+
+            <tbody>
+                {% for file in files %}
+                <tr>
+                    <td>
+                        {% if file.owner == username or username == 'admin' %}
+                        <input type="checkbox" name="files" value="{{ file.name }}">
+                        {% endif %}
+                    </td>
+                    <td>{{ file.name }}</td>
+                    <td>{{ (file.size / 1024) | round(1) }} KB</td>
+                    <td>{{ file.time }}</td>
+                    <td>
+                        {% if file.owner in deleted_users %}
+                            <del style="color:red;">{{ file.owner }}</del>
+                        {% else %}
+                            {{ file.owner }}
+                        {% endif %}
+                    </td>
+                    <td>{{ file.description or '—' }}</td>
+                    <td id="downloads-{{ loop.index0 }}">{{ file.downloads }}</td>
+                    <td>
+                        <a href="javascript:void(0);" onclick="handleDownload('{{ file.name }}', document.getElementById('downloads-{{ loop.index0 }}'))">[下载]</a>
+                        {% if file.owner == username or username == 'admin' %}
+                        <a href="{{ url_for('delete_file', filename=file.name) }}" onclick="return confirm('确定要删除 {{ file.name }} 吗？');">[删除]</a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="8">暂无文件</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <br>
+        <button type="submit">批量删除</button>
+        <p style="margin-top: 10px;">
+            共 <strong>{{ files|length }}</strong> 个文件。
+        </p>
+    </form>
+
+    <hr>
+    <h4>📤 上传文件</h4>
+    <form id="uploadForm">
+        <input type="file" id="fileInput" name="file" multiple required><br><br>
+        <label>📎 描述：</label><br>
+        <input type="text" id="descriptionInput" placeholder="可选文件描述..." style="width: 100%; padding: 6px;"><br><br>
+        <button type="submit">上传</button>
+    </form>
+
+    <!-- 显示进度 -->
+    <div id="progressContainer"></div>
+
+    <script>
+    document.getElementById('uploadForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const files = document.getElementById('fileInput').files;
+        const desc = document.getElementById('descriptionInput').value;
+        const container = document.getElementById('progressContainer');
+        container.innerHTML = '';
+
+        let completed = 0;
+
+        for (const file of files) {
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("description", desc);
+
+            const progressBarWrapper = document.createElement('div');
+            progressBarWrapper.style.marginBottom = '10px';
+            progressBarWrapper.innerHTML = `
+                <div><strong>${file.name}</strong></div>
+                <progress value="0" max="100" style="width: 300px;"></progress>
+                <span>0%</span>
+            `;
+            container.appendChild(progressBarWrapper);
+
+            const progressBar = progressBarWrapper.querySelector('progress');
+            const progressText = progressBarWrapper.querySelector('span');
+
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", "/upload_one", true);
+
+            xhr.upload.onprogress = function (e) {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    progressBar.value = percent;
+                    progressText.innerText = percent + '%';
+                }
+            };
+
+            xhr.onload = function () {
+                if (xhr.status === 200) {
+                    progressText.innerText = '✅ 上传成功';
+                } else {
+                    progressText.innerText = '❌ 上传失败';
+                }
+                completed += 1;
+                if (completed === files.length) {
+                    setTimeout(() => location.reload(), 1000);  // 所有上传完毕后 1 秒刷新
+                }
+            };
+
+            xhr.send(formData);
+        }
+    });
+    </script>
+
+</div>
+</body>
+</html>
+
+
+
+
+
+
+
+
+

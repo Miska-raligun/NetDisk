@@ -1,0 +1,6 @@
+.env
+*.json
+gen_qrcode.py
+__pycache__
+qrcode.png
+start.bat
