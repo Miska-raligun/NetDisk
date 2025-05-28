@@ -137,6 +137,24 @@
                 return;
             }
 
+             const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
+                     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+            if (isMobile && checkboxes.length > 1) {
+                alert("📱手机端暂不支持多个文件同时下载，请使用文件夹打包下载！");
+                return;
+            }
+
+            downloadBtn.disabled = true;
+            statusText.textContent = "正在下载，请勿关闭页面...";
+
+            if (isMobile) {
+                // 只允许一个文件
+                const meta_key = checkboxes[0].value;
+                window.location.href = `/download/${meta_key}`;
+                return;
+            }
+
             // 禁用按钮 + 提示
             downloadBtn.disabled = true;
             statusText.textContent = "正在下载，请勿关闭页面...";
@@ -145,13 +163,6 @@
                 const meta_key = cb.value;
 
                 try {
-                    // 记录下载次数
-                    await fetch('/record_download', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: `meta_key=${encodeURIComponent(meta_key)}`
-                    });
-
                     // 创建下载链接
                     const a = document.createElement('a');
                     a.href = `/download/${meta_key}`;

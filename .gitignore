@@ -4,3 +4,7 @@ gen_qrcode.py
 __pycache__
 qrcode.png
 start.bat
+*.log
+Caddyfile
+*.exe
+/uploads
