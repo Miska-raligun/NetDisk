@@ -1,8 +1,10 @@
-from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory, flash
+from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash,jsonify,abort
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 from dotenv import load_dotenv  # ✅ 新增
 import os,json
+import io
+import zipfile
 
 load_dotenv()
 
@@ -34,10 +36,18 @@ def save_users(users):
         json.dump(users, f, indent=2)
 
 def load_metadata():
-    if os.path.exists(META_FILE):
-        with open(META_FILE) as f:
-            return json.load(f)
-    return {}
+    if not os.path.exists(META_FILE):
+        return {}
+    
+    with open(META_FILE, 'r', encoding='utf-8') as f:
+        content = f.read().strip()
+        if not content:
+            return {}  # 空文件，返回空字典
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            print("⚠️ 警告：filesmeta.json 内容解析失败，返回空元数据")
+            return {}
 
 def save_metadata(meta):
     with open(META_FILE, 'w') as f:
@@ -195,7 +205,8 @@ def dashboard():
             "downloads": file_info.get("download_count", 0),
             "description": file_info.get("description", ""),
             "meta_key": meta_key,
-            "folder": folder
+            "folder": folder,
+            "folder_permission": folder_permission  # ✅ 加这一行
         })
 
     files.sort(key=lambda x: x["time"], reverse=True)
@@ -248,7 +259,6 @@ def change_password():
     flash("密码修改成功")
     return redirect(url_for('dashboard'))
 
-
 @app.route('/logout')
 def logout():
     session.pop('user', None)
@@ -278,9 +288,10 @@ def download(encoded):
 
     file_info = meta[meta_key]
     permission = file_info.get("permission", "private")
+    folder_owner = file_info.get("folder_owner", file_owner)
 
     # ✅ 权限判断
-    if permission == "private" and username != file_owner and not is_admin_user:
+    if permission == "private" and username != folder_owner and not is_admin_user:
         flash("❌ 没有权限下载该文件")
         return redirect(url_for('dashboard'))
 
@@ -289,10 +300,12 @@ def download(encoded):
     save_metadata(meta)
     save_log({'user': username, 'filename': meta_key, 'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, DOWNLOAD_LOG_FILE)
 
-    file_path = os.path.join(UPLOAD_FOLDER, file_owner, folder)
-    return send_from_directory(file_path, filename, as_attachment=True)
+    file_full_path = os.path.join(UPLOAD_FOLDER, file_owner, folder, filename)
+    if not os.path.exists(file_full_path):
+        flash("❌ 文件实际路径不存在")
+        return redirect(url_for('dashboard'))
 
-
+    return send_file(file_full_path, as_attachment=True)
 
 @app.route('/delete/<path:encoded>')
 def delete_file(encoded):
@@ -373,8 +386,6 @@ def delete_many():
     folder = request.form.get('folder', 'default')
     owner = request.form.get('user', session['user'])
     return redirect(url_for('dashboard', folder=folder, user=owner))
-
-
 
 @app.route('/admin/users')
 def admin_users():
@@ -718,6 +729,76 @@ def delete_folders():
 
     flash(f"✅ 已批量删除文件夹：{', '.join(deleted)}" if deleted else "⚠️ 无文件夹被删除")
     return redirect(url_for('dashboard'))
+
+
+@app.route('/record_download', methods=['POST'])
+def record_download():
+    data = request.get_json()
+    meta_key = data.get('meta_key')
+
+    if not meta_key:
+        return jsonify({'status': 'error', 'message': 'Missing meta_key'}), 400
+
+    print(f"[record_download] Request received for: {meta_key}")
+
+    meta = load_metadata()
+    if meta_key not in meta:
+        return jsonify({'status': 'error', 'message': 'File not found in metadata'}), 404
+
+    meta[meta_key]['download_count'] = meta[meta_key].get('download_count', 0) + 1
+    save_metadata(meta)
+
+    return jsonify({'status': 'success'})
+
+
+def is_folder_visible_to_user(folder_name, username):
+    try:
+        folder_owner, folder = folder_name.split('/', 1)
+    except ValueError:
+        return False  # 不是合法的 "owner/folder" 格式
+
+    metadata = load_metadata()
+    key_prefix = f"{folder_owner}/{folder}/"
+
+    # 检查是否有文件在这个文件夹下
+    for meta_key, info in metadata.items():
+        if meta_key.startswith(key_prefix):
+            if info.get("permission") == "public":
+                return True
+            if folder_owner == username or username == 'admin':
+                return True
+            return False
+    return False
+
+from flask import abort, send_file, session, jsonify
+
+@app.route('/download_folder/<path:folder_name>')
+def download_folder(folder_name):
+    username = session['user']
+    print("当前登录用户:", username)  # Debug用
+    if not username:
+        abort(403)  # 避免跳转，明确禁止访问
+
+    folder_path = os.path.join('uploads', folder_name)
+    folder_owner = folder_name.split('/')[0]
+
+    if not os.path.exists(folder_path):
+        return abort(404)
+
+    if username != folder_owner and not is_admin() and not is_folder_visible_to_user(folder_name, username):
+        return abort(403)
+
+    zip_stream = io.BytesIO()
+    with zipfile.ZipFile(zip_stream, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, folder_path)
+                zf.write(file_path, arcname)
+
+    zip_stream.seek(0)
+    return send_file(zip_stream, mimetype='application/zip', as_attachment=True, download_name=f"{folder_name.split('/')[-1]}.zip")
+
 
 
 if __name__ == '__main__':
