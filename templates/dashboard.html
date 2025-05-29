@@ -35,11 +35,16 @@
             });
         }
 
-        function handleDownload(encoded, cell) {
-            window.location.href = `/download/${encoded}`;
-            setTimeout(() => location.reload(), 500); // 1.5 秒后刷新页面显示新次数
+        async function handleDownload(encoded, cell) {
+            try {
+                const response = await fetch(`/api/download/${encoded}`, { method: 'POST' });
+                const url = await response.text();
+                cell.innerText = parseInt(cell.innerText) + 1;
+                window.location.href = url;
+            } catch (e) {
+                alert("下载失败");
+            }
         }
-
 
         async function changeOwnPassword() {
             const username = "{{ username }}";
@@ -129,65 +134,95 @@
 
         async function handleMultiDownload() {
             const checkboxes = document.querySelectorAll('input[name="files"]:checked');
-            const downloadBtn = document.getElementById('multiDownloadBtn'); // 下载按钮
-            const statusText = document.getElementById('downloadStatus');    // 状态显示
+            const downloadBtn = document.getElementById('multiDownloadBtn');
+            const statusText = document.getElementById('downloadStatus');
 
             if (checkboxes.length === 0) {
                 alert("请选择要下载的文件！");
                 return;
             }
 
-             const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
-                     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
+                            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
             if (isMobile && checkboxes.length > 1) {
-                alert("📱手机端暂不支持多个文件同时下载，请使用文件夹打包下载！");
+                alert("📱移动端暂不支持多个文件同时下载，请使用文件夹打包下载！");
                 return;
             }
-
-            downloadBtn.disabled = true;
-            statusText.textContent = "正在下载，请勿关闭页面...";
 
             if (isMobile) {
-                // 只允许一个文件
                 const meta_key = checkboxes[0].value;
-                window.location.href = `/download/${meta_key}`;
-                return;
-            }
-
-            // 禁用按钮 + 提示
-            downloadBtn.disabled = true;
-            statusText.textContent = "正在下载，请勿关闭页面...";
-
-            for (const cb of checkboxes) {
-                const meta_key = cb.value;
 
                 try {
-                    // 创建下载链接
+                    const res = await fetch(`/api/download_url/${meta_key}`);
+                    const data = await res.json();
+
+                    if (!res.ok) {
+                        alert(`❌ ${meta_key}：${data.error || '下载失败'}`);
+                        setTimeout(() => {
+                            statusText.textContent = "";
+                            location.reload();  // ✅ 手机端也刷新
+                        }, 2000);
+                        return;
+                    }
+
+                    window.location.href = data.url;
+                    setTimeout(() => {
+                        statusText.textContent = "";
+                        location.reload();  // ✅ 手机端也刷新
+                    }, 2000);
+                    return;
+                } catch (e) {
+                    console.error(`下载失败：${meta_key}`, e);
+                    alert(`❌ 下载出错，请重试`);
+                }
+                return;
+            }
+            downloadBtn.disabled = true;
+            statusText.textContent = "正在下载，请勿关闭页面...";
+            for (const cb of checkboxes) {
+                const meta_key = cb.value;
+                try {
+                    const res = await fetch(`/api/download_url/${meta_key}`);
+                    const data = await res.json();
+
+                    if (!res.ok) {
+                        alert(`❌ ${meta_key}：${data.error || '下载失败'}`);
+                        continue;
+                    }
+
                     const a = document.createElement('a');
-                    a.href = `/download/${meta_key}`;
+                    a.href = data.url;
                     a.download = '';
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
 
-                    await new Promise(resolve => setTimeout(resolve, 200));  // 防止拥堵
+                    await new Promise(resolve => setTimeout(resolve, 200));
                 } catch (e) {
                     console.error(`下载失败：${meta_key}`, e);
                 }
             }
 
-            // 恢复状态
             statusText.textContent = "下载完成 ✅";
             downloadBtn.disabled = false;
-            setTimeout(() => statusText.textContent = "", 2000); // 2秒后清空
-            location.reload();  // 刷新页面，更新下载次数
+            setTimeout(() => statusText.textContent = "", 2000);
+            location.reload();
         }
+
 
         function handleMultiFolderDownload() {
             const checkboxes = document.querySelectorAll('input[name="folders"]:checked');
             if (checkboxes.length === 0) {
                 alert("请选择要下载的文件夹！");
+                return;
+            }
+
+            const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
+                    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+            if (isMobile && checkboxes.length > 1) {
+                alert("📱移动端暂不支持多个文件同时下载，请下载单个文件夹！");
                 return;
             }
 
@@ -284,6 +319,7 @@
                     <span class="sort-arrow" onclick="sortTable(6, true)">▲</span>
                     <span class="sort-arrow" onclick="sortTable(6, false)">▼</span>
                 </th>
+                <!---<th>操作</th>-->
             </tr>
             </thead>
 
@@ -309,6 +345,21 @@
                     </td>
                     <td>{{ file.description or '—' }}</td>
                     <td id="downloads-{{ loop.index0 }}">{{ file.downloads }}</td>
+                    <!---
+                    <td>
+                        
+                        <a href="javascript:void(0);"
+                            onclick="handleDownload('{{ file.owner }}/{{ file.folder }}/{{ file.name }}', document.getElementById('downloads-{{ loop.index0 }}'))">
+                            [下载]
+                        </a>
+
+                        
+                        {% if file.owner == username or username == 'admin' %}
+                        <a href="{{ url_for('delete_file', encoded=file.owner ~ '/' ~ file.folder ~ '/' ~ file.name) }}" onclick="return confirm('确定要删除 {{ file.name }} 吗？');">[删除]</a>
+                        {% endif %}
+                        
+                    </td>
+                    -->
                 </tr>
                 {% else %}
                 <tr><td colspan="8">暂无文件</td></tr>
@@ -320,7 +371,7 @@
 
         <br>
         <button type="submit">删除</button>
-        <button id="multiDownloadBtn" onclick="handleMultiDownload()">下载</button>
+        <button id="multiDownloadBtn" type="button" onclick="handleMultiDownload()">下载</button>
         <span id="downloadStatus" style="margin-left: 10px; color: green;"></span>
         <p style="margin-top: 10px;">
             共 <strong>{{ files|length }}</strong> 个文件。
@@ -383,10 +434,10 @@
 
             <!-- ✅ 放在 form 里面 -->
             <button type="submit" onclick="return confirm('确定要删除所选文件夹？');">删除文件夹</button>
+            <button type="button" onclick="handleMultiFolderDownload()">下载文件夹</button>
         </form>
         <hr>
-        <button onclick="handleMultiFolderDownload()">下载文件夹</button>
-    <hr>
+        
     <h4>📤 上传文件</h4>
     <form id="uploadForm">
         <input type="hidden" id="folderInput" value="{{ folder }}">

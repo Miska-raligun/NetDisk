@@ -22,6 +22,28 @@ def get_local_ip():
 def log_request_info():
     logging.info(f"{request.remote_addr} - - {request.method} {request.path}")
 
+
+from zeroconf import ServiceInfo, Zeroconf
+import socket
+
+# 添加 mDNS 广播服务
+def register_mdns_service(ip: str, port: int = 443):
+    desc = {}  # 你可以添加 {"path": "/"} 等信息
+
+    info = ServiceInfo(
+        type_="_https._tcp.local.",
+        name="MioNetDisk._https._tcp.local.",
+        addresses=[socket.inet_aton(ip)],
+        port=port,
+        properties=desc,
+        server="netdisk.local."
+    )
+
+    zeroconf = Zeroconf()
+    zeroconf.register_service(info)
+    return zeroconf
+
+
 if __name__ == '__main__':
     # 日志格式（兼容中文）
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -43,6 +65,16 @@ if __name__ == '__main__':
 
     local_ip = get_local_ip()
     logging.info(f"✅ netdisk start! address: http://{local_ip}:5000")
+
+    # ✅ 注册 mDNS 服务
+    try:
+        mdns = register_mdns_service(local_ip, port=443)
+        logging.info("✅ 已注册 Bonjour mDNS 服务为 https://netdisk.local")
+    except Exception as e:
+        logging.warning(f"⚠️ 注册 mDNS 失败: {e}")
+
+    # ✅ 启动 Flask 网盘
+    serve(netdisk, host='0.0.0.0', port=5000, threads=4)
 
     serve(netdisk, host='0.0.0.0', port=5000, threads=4)
 

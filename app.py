@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash,jsonify,abort
+from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash,jsonify,abort,send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 from dotenv import load_dotenv  # ✅ 新增
@@ -305,7 +305,99 @@ def download(encoded):
         flash("❌ 文件实际路径不存在")
         return redirect(url_for('dashboard'))
 
-    return send_file(file_full_path, as_attachment=True)
+    # ✅ 权限检查通过后，重定向到 Nginx 静态路径
+    print(f"✅ 权限校验通过，重定向至 Nginx：/secure-download/{file_owner}/{folder}/{filename}")
+    return redirect(f"/secure-download/{file_owner}/{folder}/{filename}")
+
+
+@app.route('/api/download_url/<path:encoded>')
+def api_download_url(encoded):
+    if 'user' not in session:
+        return jsonify({'error': '未登录'}), 403
+
+    meta = load_metadata()
+    username = session['user']
+    is_admin_user = is_admin()
+
+    meta_key = encoded
+    parts = encoded.split('/')
+    if len(parts) != 3:
+        return jsonify({'error': '无效文件路径'}), 400
+
+    file_owner, folder, filename = parts
+
+    if meta_key not in meta:
+        return jsonify({'error': '文件元信息不存在'}), 404
+
+    file_info = meta[meta_key]
+    permission = file_info.get("permission", "private")
+    folder_owner = file_info.get("folder_owner", file_owner)
+
+    if permission == "private" and username != folder_owner and not is_admin_user:
+        return jsonify({'error': '没有权限下载该文件'}), 403
+
+    # 记录下载次数 + 写日志
+    file_info["download_count"] = file_info.get("download_count", 0) + 1
+    save_metadata(meta)
+    save_log({'user': username, 'filename': meta_key, 'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, DOWNLOAD_LOG_FILE)
+
+    file_full_path = os.path.join(UPLOAD_FOLDER, file_owner, folder, filename)
+    if not os.path.exists(file_full_path):
+        return jsonify({'error': '文件不存在或已被删除'}), 404
+
+    # 返回 Nginx 代理路径
+    url = f"/secure-download/{file_owner}/{folder}/{filename}"
+    return jsonify({'url': url})
+
+
+@app.route('/api/download/<path:encoded>', methods=['POST'])
+def api_download(encoded):
+    if 'user' not in session:
+        return "未登录", 403
+    return url_for('download_single', encoded=encoded)
+
+@app.route('/download_single/<path:encoded>')
+def download_single(encoded):
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    meta = load_metadata()
+    username = session['user']
+    is_admin_user = is_admin()
+
+    # encoded: user/folder/filename
+    meta_key = encoded
+    parts = encoded.split('/')
+    if len(parts) != 3:
+        flash("❌ 无效文件路径")
+        return redirect(url_for('dashboard'))
+
+    file_owner, folder, filename = parts
+
+    if meta_key not in meta:
+        flash("❌ 文件不存在")
+        return redirect(url_for('dashboard'))
+
+    file_info = meta[meta_key]
+    permission = file_info.get("permission", "private")
+    folder_owner = file_info.get("folder_owner", file_owner)
+
+    # ✅ 权限判断
+    if permission == "private" and username != folder_owner and not is_admin_user:
+        flash("❌ 没有权限下载该文件")
+        return redirect(url_for('dashboard'))
+
+    # ✅ 记录下载次数 + 写日志
+    file_info["download_count"] = file_info.get("download_count", 0) + 1
+    save_metadata(meta)
+    save_log({'user': username, 'filename': meta_key, 'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, DOWNLOAD_LOG_FILE)
+
+    file_full_path = os.path.join(UPLOAD_FOLDER, file_owner, folder)
+    if not os.path.exists(file_full_path):
+        flash("❌ 文件实际路径不存在")
+        return redirect(url_for('dashboard'))
+
+    return send_from_directory(file_full_path,filename, as_attachment=True)
 
 @app.route('/delete/<path:encoded>')
 def delete_file(encoded):
@@ -775,7 +867,7 @@ from flask import abort, send_file, session, jsonify
 @app.route('/download_folder/<path:folder_name>')
 def download_folder(folder_name):
     username = session['user']
-    print("当前登录用户:", username)  # Debug用
+    #print("当前登录用户:", username)  # Debug用
     if not username:
         abort(403)  # 避免跳转，明确禁止访问
 
