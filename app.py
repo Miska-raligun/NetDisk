@@ -686,6 +686,81 @@ def upload_one():
 
     return '❌ 未选择有效文件', 400
 
+@app.route('/upload_chunk', methods=['POST'])
+def upload_chunk():
+    if 'user' not in session:
+        return '未登录', 403
+
+    chunk = request.files.get('file')
+    filename = request.form['filename']
+    chunk_index = int(request.form['chunk_index'])
+    user = request.form['user'].strip()
+    folder = request.form['folder'].strip()
+
+    folder_path = os.path.join(UPLOAD_FOLDER, user, folder, 'chunks_' + filename)
+    os.makedirs(folder_path, exist_ok=True)
+
+    chunk.save(os.path.join(folder_path, f'{chunk_index}.part'))
+    return 'OK'
+
+@app.route('/merge_chunks', methods=['POST'])
+def merge_chunks():
+    if 'user' not in session:
+        return '未登录', 403
+    
+    data = request.get_json()
+    filename = data['filename']
+    folder = data['folder'].strip()
+    user = data['user'].strip()
+    desc = data.get('description', '')
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    folder_path = os.path.join(UPLOAD_FOLDER, user, folder)
+    chunk_dir = os.path.join(folder_path, 'chunks_' + filename)
+    final_path = os.path.join(folder_path, filename)
+
+    print(f"开始合并文件: {filename}，用户: {user}，文件夹: {folder}")
+    with open(final_path, 'wb') as f:
+        parts = sorted(os.listdir(chunk_dir), key=lambda x: int(x.split('.')[0]))
+        for part in parts:
+            with open(os.path.join(chunk_dir, part), 'rb') as pf:
+                f.write(pf.read())
+
+    shutil.rmtree(chunk_dir)  # 清理临时目录
+
+    # 记录 metadata 和日志（集中进行）
+    size = os.path.getsize(final_path)
+    meta_key = f"{user}/{folder}/{filename}"
+    permission = 'private'
+
+    user_dir = os.path.join(UPLOAD_FOLDER, user)
+    folder_meta_path = os.path.join(user_dir, 'folder_meta.json')
+    if os.path.exists(folder_meta_path):
+        try:
+            with open(folder_meta_path) as f:
+                folder_meta = json.load(f)
+                if folder in folder_meta:
+                    permission = folder_meta[folder].get('permission', 'private')
+        except:
+            pass
+
+    with meta_lock:
+        meta = load_metadata()
+        meta[meta_key] = {
+            "owner": session['user'],
+            "folder_owner": user,
+            "size": size,
+            "upload_time": now,
+            "download_count": 0,
+            "description": desc,
+            "folder": folder,
+            "permission": permission
+        }
+        save_metadata(meta)
+
+    save_log({'user': session['user'], 'filename': meta_key, 'time': now}, UPLOAD_LOG_FILE)
+    return '合并完成'
+
 
 
 

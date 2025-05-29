@@ -452,60 +452,109 @@
     <div id="progressContainer"></div>
 
     <script>
-    document.getElementById('uploadForm').addEventListener('submit', function (e) {
-        e.preventDefault();
-        const files = document.getElementById('fileInput').files;
-        const desc = document.getElementById('descriptionInput').value;
-        const container = document.getElementById('progressContainer');
-        container.innerHTML = '';
 
-        let completed = 0;
+        async function uploadChunksInBatches(file, CHUNK_SIZE = 100 * 1024 * 1024, MAX_CONCURRENT = 3) {
+            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+            const folder = document.getElementById("folderInput").value;
+            const user = document.getElementById("ownerInput").value;
+            const desc = document.getElementById("descriptionInput").value;
 
-        for (const file of files) {
-            const formData = new FormData();
-            formData.append("file", file);
-            formData.append("description", desc);
-            formData.append("folder", document.getElementById("folderInput").value);  // ✅ 新增
-            formData.append("user", document.getElementById("ownerInput").value);    // ✅ 新增
+            let progressBar, progressText;
+            {
+                const container = document.getElementById("progressContainer");
+                const wrapper = document.createElement("div");
+                wrapper.innerHTML = `
+                    <div><strong>${file.name}</strong></div>
+                    <progress value="0" max="100" style="width: 300px;"></progress>
+                    <span>0%</span>
+                `;
+                container.appendChild(wrapper);
+                progressBar = wrapper.querySelector("progress");
+                progressText = wrapper.querySelector("span");
+            }
 
-            const progressBarWrapper = document.createElement('div');
-            progressBarWrapper.style.marginBottom = '10px';
-            progressBarWrapper.innerHTML = `
-                <div><strong>${file.name}</strong></div>
-                <progress value="0" max="100" style="width: 300px;"></progress>
-                <span>0%</span>
-            `;
-            container.appendChild(progressBarWrapper);
+            let current = 0;
+            const queue = [];
 
-            const progressBar = progressBarWrapper.querySelector('progress');
-            const progressText = progressBarWrapper.querySelector('span');
+            function createChunkTask(index) {
+                return () => new Promise((resolve, reject) => {
+                    const chunk = file.slice(index * CHUNK_SIZE, (index + 1) * CHUNK_SIZE);
+                    const form = new FormData();
+                    form.append("file", chunk);
+                    form.append("filename", file.name);
+                    form.append("chunk_index", index);
+                    form.append("total_chunks", totalChunks);
+                    form.append("description", desc);
+                    form.append("folder", folder);
+                    form.append("user", user);
 
-            const xhr = new XMLHttpRequest();
-            xhr.open("POST", "/upload_one", true);
+                    const xhr = new XMLHttpRequest();
+                    xhr.open("POST", "/upload_chunk", true);
+                    xhr.onload = () => {
+                        current += 1;
+                        const percent = Math.round((current / totalChunks) * 100);
+                        progressBar.value = percent;
+                        progressText.innerText = percent + '%';
+                        resolve();
+                    };
+                    xhr.onerror = () => reject();
+                    xhr.send(form);
+                });
+            }
 
-            xhr.upload.onprogress = function (e) {
-                if (e.lengthComputable) {
-                    const percent = Math.round((e.loaded / e.total) * 100);
-                    progressBar.value = percent;
-                    progressText.innerText = percent + '%';
-                }
-            };
+            // 构建上传任务
+            for (let i = 0; i < totalChunks; i++) {
+                queue.push(createChunkTask(i));
+            }
 
-            xhr.onload = function () {
-                if (xhr.status === 200) {
-                    progressText.innerText = '✅ 上传成功';
-                } else {
-                    progressText.innerText = '❌ 上传失败';
-                }
-                completed += 1;
-                if (completed === files.length) {
-                    setTimeout(() => location.reload(), 1000);  // 所有上传完毕后 1 秒刷新
-                }
-            };
+            // 控制并发上传
+            const pool = Array(MAX_CONCURRENT).fill(Promise.resolve());
+            for (const task of queue) {
+                const next = pool.shift().then(task);
+                pool.push(next);
+            }
 
-            xhr.send(formData);
+            // 等待所有上传完成
+            await Promise.all(pool);
+
+            // ✅ 上传完所有分片后，调用合并接口
+            const mergeForm = new FormData();
+            mergeForm.append("filename", file.name);
+            mergeForm.append("total_chunks", totalChunks);
+            mergeForm.append("description", desc);
+            mergeForm.append("folder", folder);
+            mergeForm.append("user", user);
+
+            await fetch("/merge_chunks", {
+                method: "POST",
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    filename: file.name,
+                    total_chunks: totalChunks,
+                    description: desc,
+                    folder: folder,
+                    user: user
+                })
+            });
+
+            progressText.innerText = '✅ 上传成功';
         }
-    });
+
+        document.getElementById('uploadForm').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const files = document.getElementById('fileInput').files;
+            document.getElementById('progressContainer').innerHTML = '';
+
+            for (const file of files) {
+                await uploadChunksInBatches(file);
+            }
+
+            setTimeout(() => location.reload(), 1000);
+        });
+
+
     </script>
 
 </div>
