@@ -92,6 +92,16 @@
     {% endif %}
     {% endwith %}
 
+    <div class="quota">
+        <strong>💾 总磁盘空间：</strong>
+        已用 {{ used_space_total | format_size }} /
+        {{ total_quota_all_users | format_size }}
+        (剩余 {{ (total_quota_all_users - used_space_total) | format_size }})
+        <div class="progress-bar">
+            <div class="progress" style="width: {{ (used_space_total / total_quota_all_users) * 100 }}%"></div>
+        </div>
+    </div>
+
     <form method="POST" action="{{ url_for('admin_delete_users') }}">
         <table>
             <thead>
@@ -110,7 +120,7 @@
                     <td><input type="checkbox" name="delete_users" value="{{ user.username }}"></td>
                     <td>{{ user.username }}</td>
                     <td>{{ user.created_at }}</td>
-                    <td>{{ (user.used / 1024 / 1024) | round(2) }} MB</td>
+                    <td>{{ user.used | format_size }}</td>
                     <td>{{ user.percent | round(2) }}%</td>
                     <td>
                         <button type="button" class="btn" onclick="changePassword('{{ user.username }}')">修改密码</button>

@@ -16,7 +16,7 @@ USER_FILE = 'users.json'
 META_FILE = 'filemeta.json'
 UPLOAD_LOG_FILE = 'upload_log.json'
 DOWNLOAD_LOG_FILE = 'download_log.json'
-TOTAL_QUOTA = 10 * 1024 * 1024 * 1024  # 100 MB
+TOTAL_QUOTA = 10 * 1024 * 1024 * 1024  
 
 SUPER_ADMIN = {
     'username': os.getenv('ADMIN_USERNAME', 'admin'),
@@ -24,6 +24,28 @@ SUPER_ADMIN = {
 }
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def get_total_used_space():
+    total = 0
+    for root, _, files in os.walk(UPLOAD_FOLDER):
+        for f in files:
+            fp = os.path.join(root, f)
+            if os.path.isfile(fp):
+                total += os.path.getsize(fp)
+    return total
+
+def get_total_user_used_space(user_name):
+    total = 0
+    user_root = os.path.join(UPLOAD_FOLDER, user_name)
+    if not os.path.exists(user_root):
+        return 0
+
+    for root, _, files in os.walk(user_root):
+        for f in files:
+            fp = os.path.join(root, f)
+            if os.path.isfile(fp):
+                total += os.path.getsize(fp)
+    return total
 
 def format_size(size_bytes):
     if size_bytes >= 1024 ** 3:
@@ -223,9 +245,12 @@ def dashboard():
 
     files.sort(key=lambda x: x["time"], reverse=True)
 
+    used_space=get_total_user_used_space(username)
+
     return render_template("dashboard.html",
         username=username,
-        used_space=sum(f["size"] for f in files),
+        #used_space=sum(f["size"] for f in files),
+        used_space=used_space,
         total_space=TOTAL_QUOTA,
         total_quota_mb=TOTAL_QUOTA / 1024 / 1024,
         files=files,
@@ -502,7 +527,9 @@ def admin_users():
     deleted_users = {info['owner'] for info in meta.values() if info['owner'] not in users and info['owner'] != SUPER_ADMIN['username']}
 
     user_stats = []
+    users_number=0
     for uname in users:
+        users_number += 1
         if uname == SUPER_ADMIN['username']:
             continue
         used = sum(info['size'] for info in meta.values() if info['owner'] == uname)
@@ -513,8 +540,15 @@ def admin_users():
             'used': used,
             'percent': percent
         })
-
-    return render_template('admin_user.html', users=user_stats, username=session['user'], deleted_users=deleted_users)
+    used_space_total = get_total_used_space()
+    total_quota_all_users = TOTAL_QUOTA * users_number
+    return render_template('admin_user.html', 
+                           users=user_stats, 
+                           username=session['user'], 
+                           deleted_users=deleted_users,
+                           used_space_total=used_space_total,
+                           total_quota_all_users=total_quota_all_users,
+                           )
 
 import shutil
 @app.route('/admin/delete_users', methods=['POST'])
