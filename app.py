@@ -25,6 +25,18 @@ SUPER_ADMIN = {
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+def format_size(size_bytes):
+    if size_bytes >= 1024 ** 3:
+        return f"{size_bytes / (1024 ** 3):.2f} GB"
+    elif size_bytes >= 1024 ** 2:
+        return f"{size_bytes / (1024 ** 2):.2f} MB"
+    elif size_bytes >= 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes} B"
+
+# 注册为过滤器
+app.jinja_env.filters['format_size'] = format_size
 def load_users():
     if os.path.exists(USER_FILE):
         with open(USER_FILE) as f:
@@ -472,7 +484,7 @@ def delete_many():
             continue
 
     save_metadata(meta)
-    flash(f"✅ 已批量删除：{', '.join(deleted)}")
+    flash(f"✅ 已删除：{', '.join(deleted)}")
 
     # ✅ 保持当前视图跳转
     folder = request.form.get('folder', 'default')

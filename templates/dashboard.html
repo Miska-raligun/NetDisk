@@ -281,9 +281,9 @@
 
     <div class="quota">
         <strong>💾 磁盘空间：</strong>
-        已用 {{ (used_space / 1024 / 1024) | round(2) }} MB /
-        {{ total_quota_mb | round(2) }} MB
-        (剩余 {{ ((total_space - used_space) / 1024 / 1024) | round(2) }} MB)
+        已用 {{ used_space | format_size }} /
+        {{ total_space | format_size }}
+        (剩余 {{ (total_space - used_space) | format_size }})
         <div class="progress-bar">
             <div class="progress" style="width: {{ (used_space / total_space) * 100 }}%"></div>
         </div>
@@ -334,7 +334,7 @@
                         {% endif %}
                     </td>
                     <td>{{ file.name }}</td>
-                    <td>{{ (file.size / 1024) | round(1) }} KB</td>
+                    <td>{{ file.size | format_size }}</td>
                     <td>{{ file.time }}</td>
                     <td>
                         {% if file.owner in deleted_users %}
