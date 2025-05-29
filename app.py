@@ -741,7 +741,7 @@ def upload_chunk():
 def merge_chunks():
     if 'user' not in session:
         return '未登录', 403
-    
+
     data = request.get_json()
     filename = data['filename']
     folder = data['folder'].strip()
@@ -753,7 +753,20 @@ def merge_chunks():
     chunk_dir = os.path.join(folder_path, 'chunks_' + filename)
     final_path = os.path.join(folder_path, filename)
 
-    print(f"开始合并文件: {filename}，用户: {user}，文件夹: {folder}")
+    # 计算新文件的分片总大小
+    chunk_size_total = sum(
+        os.path.getsize(os.path.join(chunk_dir, f)) for f in os.listdir(chunk_dir)
+        if os.path.isfile(os.path.join(chunk_dir, f))
+    )
+
+    used_space = get_total_user_used_space(user)
+
+    # ✅ 判断是否超出配额（对每个用户同用 TOTAL_QUOTA）
+    if used_space + chunk_size_total > TOTAL_QUOTA:
+        shutil.rmtree(chunk_dir)  # 删除用户上传的 chunk 分片
+        return "❌ 当前用户存储空间不足，上传失败，分片已清除", 403
+
+    # 合并写入
     with open(final_path, 'wb') as f:
         parts = sorted(os.listdir(chunk_dir), key=lambda x: int(x.split('.')[0]))
         for part in parts:
@@ -762,13 +775,12 @@ def merge_chunks():
 
     shutil.rmtree(chunk_dir)  # 清理临时目录
 
-    # 记录 metadata 和日志（集中进行）
+    # 写 metadata
     size = os.path.getsize(final_path)
     meta_key = f"{user}/{folder}/{filename}"
     permission = 'private'
 
-    user_dir = os.path.join(UPLOAD_FOLDER, user)
-    folder_meta_path = os.path.join(user_dir, 'folder_meta.json')
+    folder_meta_path = os.path.join(UPLOAD_FOLDER, user, 'folder_meta.json')
     if os.path.exists(folder_meta_path):
         try:
             with open(folder_meta_path) as f:
@@ -794,9 +806,6 @@ def merge_chunks():
 
     save_log({'user': session['user'], 'filename': meta_key, 'time': now}, UPLOAD_LOG_FILE)
     return '合并完成'
-
-
-
 
 @app.route('/create_folder', methods=['POST'])
 def create_folder():
