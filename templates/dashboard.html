@@ -333,7 +333,11 @@
                             <input type="checkbox" name="files" value="{{ file.meta_key }}">
                         {% endif %}
                     </td>
-                    <td>{{ file.name }}</td>
+                    <td>
+                        <a href="{{ url_for('preview_file', encoded=file.meta_key) }}" target="_blank">
+                            {{ file.name }}
+                        </a>
+                    </td>
                     <td>{{ file.size | format_size }}</td>
                     <td>{{ file.time }}</td>
                     <td>

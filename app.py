@@ -240,7 +240,7 @@ def dashboard():
             "description": file_info.get("description", ""),
             "meta_key": meta_key,
             "folder": folder,
-            "folder_permission": folder_permission  # ✅ 加这一行
+            "folder_permission": folder_permission,  # ✅ 加这一行
         })
 
     files.sort(key=lambda x: x["time"], reverse=True)
@@ -1021,7 +1021,43 @@ def download_folder(folder_name):
     zip_stream.seek(0)
     return send_file(zip_stream, mimetype='application/zip', as_attachment=True, download_name=f"{folder_name.split('/')[-1]}.zip")
 
+@app.route('/preview/<path:encoded>')
+def preview_file(encoded):
+    if 'user' not in session:
+        return redirect(url_for('login'))
 
+    meta = load_metadata()
+    username = session['user']
+    is_admin_user = is_admin()
+
+    parts = encoded.split('/')
+    if len(parts) != 3:
+        flash("❌ 无效文件路径")
+        return redirect(url_for('dashboard'))
+
+    file_owner, folder, filename = parts
+    meta_key = encoded
+
+    if meta_key not in meta:
+        flash("❌ 文件不存在")
+        return redirect(url_for('dashboard'))
+
+    file_info = meta[meta_key]
+    permission = file_info.get("permission", "private")
+    folder_owner = file_info.get("folder_owner", file_owner)
+
+    # ✅ 权限检查
+    if permission == "private" and username != folder_owner and not is_admin_user:
+        flash("❌ 无权限预览该文件")
+        return redirect(url_for('dashboard'))
+
+    file_full_path = os.path.join(UPLOAD_FOLDER, file_owner, folder, filename)
+    if not os.path.exists(file_full_path):
+        flash("❌ 文件实际不存在")
+        return redirect(url_for('dashboard'))
+
+    # ✅ 直接返回文件内容用于预览（不作为附件下载）
+    return send_file(file_full_path)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
