@@ -16,14 +16,37 @@ USER_FILE = 'users.json'
 META_FILE = 'filemeta.json'
 UPLOAD_LOG_FILE = 'upload_log.json'
 DOWNLOAD_LOG_FILE = 'download_log.json'
-TOTAL_QUOTA = 10 * 1024 * 1024 * 1024  
+USER_QUOTA = 500 * 1024 * 1024 * 1024  
+TOTAL_QUOTA = 3 * 1024 * 1024 * 1024 * 1024
 
 SUPER_ADMIN = {
     'username': os.getenv('ADMIN_USERNAME', 'admin'),
     'password': os.getenv('ADMIN_PASSWORD', 'admin123')
 }
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+def ensure_initial_files():
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+    for file in [USER_FILE, META_FILE, UPLOAD_LOG_FILE, DOWNLOAD_LOG_FILE]:
+        if not os.path.exists(file):
+            with open(file, 'w') as f:
+                json.dump({} if 'log' not in file else [], f)  # 日志文件为 []，其他为 {}
+
+    # ✅ 确保超级管理员用户被视为已注册用户（可选）
+    users = {}
+    if os.path.exists(USER_FILE):
+        with open(USER_FILE, 'r') as f:
+            try:
+                users = json.load(f)
+            except:
+                pass
+    if SUPER_ADMIN['username'] not in users:
+        users[SUPER_ADMIN['username']] = {
+            'password': generate_password_hash(SUPER_ADMIN['password']),
+            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        with open(USER_FILE, 'w') as f:
+            json.dump(users, f, indent=2)
 
 def get_total_used_space():
     total = 0
@@ -48,12 +71,14 @@ def get_total_user_used_space(user_name):
     return total
 
 def format_size(size_bytes):
-    if size_bytes >= 1024 ** 3:
+    if size_bytes >= 1024 ** 4:
+        return f"{size_bytes / (1024 ** 4):.2f} TB"
+    elif size_bytes >= 1024 ** 3:
         return f"{size_bytes / (1024 ** 3):.2f} GB"
     elif size_bytes >= 1024 ** 2:
         return f"{size_bytes / (1024 ** 2):.2f} MB"
     elif size_bytes >= 1024:
-        return f"{size_bytes / 1024:.1f} KB"
+        return f"{size_bytes / (1024 ** 1):.1f} KB"
     else:
         return f"{size_bytes} B"
 
@@ -251,8 +276,8 @@ def dashboard():
         username=username,
         #used_space=sum(f["size"] for f in files),
         used_space=used_space,
-        total_space=TOTAL_QUOTA,
-        total_quota_mb=TOTAL_QUOTA / 1024 / 1024,
+        total_space=USER_QUOTA,
+        total_quota_mb=USER_QUOTA / 1024 / 1024,
         files=files,
         folder=folder,
         folder_owner=target_user,
@@ -530,8 +555,8 @@ def admin_users():
     users_number=0
     for uname in users:
         users_number += 1
-        if uname == SUPER_ADMIN['username']:
-            continue
+        #if uname == SUPER_ADMIN['username']:
+            #continue
         used = sum(info['size'] for info in meta.values() if info['owner'] == uname)
         percent = (used / TOTAL_QUOTA) * 100
         user_stats.append({
@@ -541,13 +566,13 @@ def admin_users():
             'percent': percent
         })
     used_space_total = get_total_used_space()
-    total_quota_all_users = TOTAL_QUOTA * users_number
+    #total_quota_all_users = TOTAL_QUOTA * users_number
     return render_template('admin_user.html', 
                            users=user_stats, 
                            username=session['user'], 
                            deleted_users=deleted_users,
                            used_space_total=used_space_total,
-                           total_quota_all_users=total_quota_all_users,
+                           total_quota_all_users=TOTAL_QUOTA,
                            )
 
 import shutil
@@ -692,11 +717,20 @@ def upload_one():
     if not is_self_upload and not is_admin():
         if permission != 'public':
             return '❌ 无权限上传到私密文件夹', 403
-
+        
     uploaded_file = request.files.get('file')
     if uploaded_file and uploaded_file.filename:
         filename = uploaded_file.filename
         save_path = os.path.join(folder_path, filename)
+        file_size = len(uploaded_file.read())
+        uploaded_file.stream.seek(0)  # 回到文件开头再保存
+
+        # ✅ 管理员不做空间检查
+        if not is_admin():
+            used = get_total_user_used_space(target_user)
+            if used + file_size > USER_QUOTA:
+                return "❌ 当前用户存储空间不足，上传失败", 403
+        
         uploaded_file.save(save_path)
         size = os.path.getsize(save_path)
         meta_key = f"{target_user}/{folder}/{filename}"
@@ -759,12 +793,13 @@ def merge_chunks():
         if os.path.isfile(os.path.join(chunk_dir, f))
     )
 
-    used_space = get_total_user_used_space(user)
+    if not is_admin():
+        used_space = get_total_user_used_space(user)
 
-    # ✅ 判断是否超出配额（对每个用户同用 TOTAL_QUOTA）
-    if used_space + chunk_size_total > TOTAL_QUOTA:
-        shutil.rmtree(chunk_dir)  # 删除用户上传的 chunk 分片
-        return "❌ 当前用户存储空间不足，上传失败，分片已清除", 403
+        # ✅ 判断是否超出配额（对每个用户同用 TOTAL_QUOTA）
+        if used_space + chunk_size_total > USER_QUOTA:
+            shutil.rmtree(chunk_dir)  # 删除用户上传的 chunk 分片
+            return "❌ 当前用户存储空间不足，上传失败，分片已清除", 403
 
     # 合并写入
     with open(final_path, 'wb') as f:
@@ -849,7 +884,7 @@ def create_folder():
         json.dump(folder_meta, f, indent=2)
 
     flash(f"✅ 已创建文件夹 {folder_name}，权限：{permission}")
-    return redirect(url_for('dashboard'))
+    return redirect(url_for('dashboard', folder=folder_name, user=username))
 
 @app.route('/delete_folder', methods=['POST'])
 def delete_folder():

@@ -1,6 +1,7 @@
 import logging
 from logging.handlers import RotatingFileHandler
 from waitress import serve
+import app
 from app import app as netdisk
 import socket
 from flask import request
@@ -74,8 +75,7 @@ if __name__ == '__main__':
         logging.warning(f"⚠️ 注册 mDNS 失败: {e}")
 
     # ✅ 启动 Flask 网盘
-    serve(netdisk, host='0.0.0.0', port=5000, threads=4)
-
+    app.ensure_initial_files()
     serve(netdisk, host='0.0.0.0', port=5000, threads=4)
 
 
