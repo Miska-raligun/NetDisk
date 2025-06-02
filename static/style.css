@@ -123,6 +123,113 @@ th {
     color: #007bff;
 }
 
+.pagination-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 15px;
+    font-size: 14px;
+}
+.pagination a, .pagination span {
+    margin: 0 3px;
+    padding: 4px 8px;
+    text-decoration: none;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    color: #333;
+}
+.pagination .active {
+    background-color: #4CAF50;
+    color: white;
+    font-weight: bold;
+    border-color: #4CAF50;
+}
+.pagination .disabled {
+    color: #ccc;
+    border-color: #eee;
+    cursor: not-allowed;
+}
+.pagination-jump input {
+    padding: 2px 5px;
+    font-size: 13px;
+}
+.pagination-jump button {
+    padding: 2px 6px;
+    font-size: 13px;
+}
+
+.pagination-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 15px;
+    font-size: 14px;
+    gap: 30px;
+}
+
+/* 文件名列 */
+td.filename-cell {
+    max-width: 300px;
+    word-wrap: break-word;
+    word-break: break-all;
+    white-space: normal;
+}
+
+/* 描述列 */
+td.description-cell {
+    max-width: 250px;
+    word-wrap: break-word;
+    word-break: break-all;
+    white-space: normal;
+}
+
+/* 上传者、时间、大小、下载次数 列 */
+td.meta-cell {
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* 表头居中 */
+th {
+    text-align: center;
+}
+
+/* 分页按钮居中显示 */
+.pagination-container {
+    text-align: center;
+    margin-top: 10px;
+}
+
+.pagination a, .pagination span {
+    margin: 0 3px;
+    padding: 5px 10px;
+    display: inline-block;
+}
+
+.pagination .active {
+    font-weight: bold;
+    color: #fff;
+    background-color: #007BFF;
+    border-radius: 5px;
+}
+
+.pagination .disabled {
+    color: #ccc;
+}
+
+#progressContainer {
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    padding: 10px;
+    margin-top: 10px;
+    background: #f9f9f9;
+}
+.upload-item {
+    margin-bottom: 8px;
+    padding: 4px;
+    border-bottom: 1px solid #ddd;
+}
 
 
 

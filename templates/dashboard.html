@@ -295,6 +295,39 @@
         📂 当前路径：<strong>{{ folder_owner }}/{{ folder }}</strong>
     </div>
 
+    <div class="pagination-container">
+        <div class="pagination">
+            {% if page > 1 %}
+                <a href="{{ url_for('dashboard', folder=folder, user=folder_owner, page=page-1) }}">«</a>
+            {% else %}
+                <span class="disabled">«</span>
+            {% endif %}
+
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == page %}
+                    <span class="active">{{ p }}</span>
+                {% else %}
+                    <a href="{{ url_for('dashboard', folder=folder, user=folder_owner, page=p) }}">{{ p }}</a>
+                {% endif %}
+            {% endfor %}
+
+            {% if page < total_pages %}
+                <a href="{{ url_for('dashboard', folder=folder, user=folder_owner, page=page+1) }}">»</a>
+            {% else %}
+                <span class="disabled">»</span>
+            {% endif %}
+        </div>
+
+        <div class="pagination-jump">
+            <form method="get" action="{{ url_for('dashboard') }}" style="display:inline;">
+                <input type="hidden" name="folder" value="{{ folder }}">
+                <input type="hidden" name="user" value="{{ folder_owner }}">
+                    跳转到第 <input type="number" name="page" min="1" max="{{ total_pages }}" value="{{ page }}" style="width: 60px;"> 页
+                    <button type="submit">Go</button>
+            </form>
+        </div>
+    </div>
+
     <form method="POST" action="{{ url_for('delete_many') }}">
         <table border="1" cellpadding="6" cellspacing="0" width="100%">
             <thead>
@@ -335,22 +368,22 @@
                             <input type="checkbox" name="files" value="{{ file.meta_key }}">
                         {% endif %}
                     </td>
-                    <td>
+                    <td class="filename-cell">
                         <a href="{{ url_for('preview_file', encoded=file.meta_key) }}" target="_blank">
                             {{ file.name }}
                         </a>
                     </td>
-                    <td>{{ file.size | format_size }}</td>
-                    <td>{{ file.time }}</td>
-                    <td>
+                    <td class="meta-cell">{{ file.size | format_size }}</td>
+                    <td class="meta-cell">{{ file.time }}</td>
+                    <td class="meta-cell">
                         {% if file.owner in deleted_users %}
                             <del style="color:red;">{{ file.owner }}</del>
                         {% else %}
                             {{ file.owner }}
                         {% endif %}
                     </td>
-                    <td>{{ file.description or '—' }}</td>
-                    <td id="downloads-{{ loop.index0 }}">{{ file.downloads }}</td>
+                    <td class="description-cell">{{ file.description or '—' }}</td>
+                    <td class="meta-cell" id="downloads-{{ loop.index0 }}">{{ file.downloads }}</td>
                     <!---
                     <td>
                         
@@ -380,7 +413,7 @@
         <button id="multiDownloadBtn" type="button" onclick="handleMultiDownload()">下载</button>
         <span id="downloadStatus" style="margin-left: 10px; color: green;"></span>
         <p style="margin-top: 10px;">
-            共 <strong>{{ files|length }}</strong> 个文件。
+            共 <strong>{{ total_files }}</strong> 个文件。
         </p>
     </form>
 
@@ -458,6 +491,31 @@
     <div id="progressContainer"></div>
 
     <script>
+        function createProgressWrapper(fileName) {
+            const container = document.getElementById("progressContainer");
+
+            // 只移除状态为成功的项目，失败项不删
+            const successItems = [...container.children].filter(child =>
+                child.dataset.status === "success"
+            );
+
+            if (successItems.length >= 5) {
+                container.removeChild(successItems[0]);
+            }
+
+            const wrapper = document.createElement("div");
+            wrapper.className = "upload-item";
+            wrapper.dataset.status = "uploading";  // 初始状态
+
+            wrapper.innerHTML = `
+                <div><strong>${fileName}</strong></div>
+                <progress value="0" max="100" style="width: 300px;"></progress>
+                <span>上传中...</span>
+            `;
+            container.appendChild(wrapper);
+            return wrapper;
+        }
+
         const CHUNK_SIZE = 100 * 1024 * 1024; // 100MB 分片阈值
         const DIRECT_UPLOAD_LIMIT = 100 * 1024 * 1024; // 100MB 以下直接上传
 
@@ -473,18 +531,10 @@
             formData.append("user", user);
             formData.append("description", desc);
 
-            const container = document.getElementById("progressContainer");
-            const wrapper = document.createElement("div");
-            wrapper.innerHTML = `
-                <div><strong>${file.name}</strong></div>
-                <progress value="0" max="100" style="width: 300px;"></progress>
-                <span>上传中...</span>
-            `;
-            container.appendChild(wrapper);
+            const wrapper = createProgressWrapper(file.name);
             const progressBar = wrapper.querySelector("progress");
             const progressText = wrapper.querySelector("span");
 
-            // ✅ 改用 XMLHttpRequest 实现进度监听
             return new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
                 xhr.open("POST", "/upload_one", true);
@@ -500,15 +550,18 @@
                 xhr.onload = function () {
                     if (xhr.status === 200) {
                         progressText.textContent = "✅ 上传成功";
+                        wrapper.dataset.status = "success";  // 标记状态
                         resolve();
                     } else {
                         progressText.textContent = "❌ 上传失败";
+                        wrapper.dataset.status = "fail";
                         reject();
                     }
                 };
 
                 xhr.onerror = function () {
                     progressText.textContent = "❌ 网络错误";
+                    wrapper.dataset.status = "fail";
                     reject();
                 };
 
@@ -522,19 +575,9 @@
             const user = document.getElementById("ownerInput").value;
             const desc = document.getElementById("descriptionInput").value;
 
-            let progressBar, progressText;
-            {
-                const container = document.getElementById("progressContainer");
-                const wrapper = document.createElement("div");
-                wrapper.innerHTML = `
-                    <div><strong>${file.name}</strong></div>
-                    <progress value="0" max="100" style="width: 300px;"></progress>
-                    <span>0%</span>
-                `;
-                container.appendChild(wrapper);
-                progressBar = wrapper.querySelector("progress");
-                progressText = wrapper.querySelector("span");
-            }
+            const wrapper = createProgressWrapper(file.name);
+            const progressBar = wrapper.querySelector("progress");
+            const progressText = wrapper.querySelector("span");
 
             let current = 0;
             const queue = [];
@@ -554,45 +597,43 @@
                     const xhr = new XMLHttpRequest();
                     xhr.open("POST", "/upload_chunk", true);
                     xhr.onload = () => {
-                        current += 1;
-                        const percent = Math.round((current / totalChunks) * 100);
-                        progressBar.value = percent;
-                        progressText.innerText = percent + '%';
-                        resolve();
+                        if (xhr.status === 200) {
+                            current += 1;
+                            const percent = Math.round((current / totalChunks) * 100);
+                            progressBar.value = percent;
+                            progressText.innerText = percent + '%';
+                            wrapper.dataset.status = "success";  // ✅ 标记为成功
+                            resolve();
+                        } else {
+                            progressText.innerText = '❌ 分片上传失败（状态码：' + xhr.status + '）';
+                            wrapper.dataset.status = "fail";     // ❌ 标记为失败
+                            reject();
+                        }
                     };
-                    xhr.onerror = () => reject();
+                    xhr.onerror = () => {
+                        progressText.innerText = '❌ 网络错误';
+                        wrapper.dataset.status = "fail";         // ❌ 标记为失败
+                        reject();
+                    };
                     xhr.send(form);
                 });
             }
 
-            // 构建上传任务
             for (let i = 0; i < totalChunks; i++) {
                 queue.push(createChunkTask(i));
             }
 
-            // 控制并发上传
             const pool = Array(MAX_CONCURRENT).fill(Promise.resolve());
             for (const task of queue) {
                 const next = pool.shift().then(task);
                 pool.push(next);
             }
 
-            // 等待所有上传完成
             await Promise.all(pool);
-
-            // ✅ 上传完所有分片后，调用合并接口
-            const mergeForm = new FormData();
-            mergeForm.append("filename", file.name);
-            mergeForm.append("total_chunks", totalChunks);
-            mergeForm.append("description", desc);
-            mergeForm.append("folder", folder);
-            mergeForm.append("user", user);
 
             await fetch("/merge_chunks", {
                 method: "POST",
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     filename: file.name,
                     total_chunks: totalChunks,
@@ -603,6 +644,7 @@
             });
 
             progressText.innerText = '✅ 上传成功';
+            wrapper.dataset.status = "success";
         }
 
         document.getElementById('uploadForm').addEventListener('submit', async function (e) {

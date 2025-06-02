@@ -272,6 +272,16 @@ def dashboard():
 
     used_space=get_total_user_used_space(username)
 
+    try:
+        page = int(request.args.get('page', 1))
+    except ValueError:
+        page = 1
+
+    PER_PAGE = 10
+    total_files = len(files)
+    total_pages = (total_files + PER_PAGE - 1) // PER_PAGE
+    files = files[(page - 1) * PER_PAGE: page * PER_PAGE]
+
     return render_template("dashboard.html",
         username=username,
         #used_space=sum(f["size"] for f in files),
@@ -282,7 +292,10 @@ def dashboard():
         folder=folder,
         folder_owner=target_user,
         folders=visible_folders,
-        deleted_users=set()
+        deleted_users=set(),
+        page=page,
+        total_pages=total_pages,
+        total_files=total_files
     )
 
 
